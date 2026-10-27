@@ -1,6 +1,6 @@
 # Chinese README Override
 
-优先阅读仓库已有的中文 README，并随时切换回原文的用户脚本。
+优先阅读仓库已有的中文 README，并随时切换回原文；同时集成 GitHub 界面汉化的用户脚本。
 
 脚本在支持的 Git 仓库页面查找中文 README，在浏览器中渲染后替换当前 README 正文，并提供「译文」标签。它不会自动翻译英文文档；仓库没有对应中文文件时，页面保持原样。
 
@@ -24,6 +24,18 @@
 4. 刷新目标仓库页面。
 
 ## 使用方法
+
+### GitHub 界面汉化
+
+安装一个脚本即可使用两项功能。界面汉化默认开启，仅在 `github.com` 顶层页面运行，通过内置词库处理导航、按钮及其他界面文字。它沿用上游用户内容排除规则，并补充本项目 README 容器的保护，不对 README、Issue 正文、评论及代码进行机器翻译；网站结构变化仍可能影响排除规则。
+
+油猴菜单中的「GitHub 界面汉化：已启用／已停用」可单独控制此功能，切换后页面自动刷新。它与「中文 README 覆盖」互不依赖。Gitee、GitLab、GitCode 和自建站点仅运行 README 覆盖功能。
+
+如已安装独立的「GitHub 界面汉化」脚本，建议停用其中一份，避免重复处理。界面词库打包在安装文件中，无需另行安装；README 渲染仍使用原有 marked 和 DOMPurify 外部依赖。
+
+汉化模块来自 Moss & WorkBuddy 的「GitHub 界面汉化」`2026.10.24.1851`（MIT）。来源、保留的开发模式和集成修改见 [第三方代码说明](./THIRD_PARTY_NOTICES.md)。
+
+### 中文 README 覆盖
 
 - 打开存在中文 README 的仓库首页，脚本会优先显示中文内容。
 - 点击原有 README 标签可切回原文，点击「译文」可重新显示中文。
@@ -114,8 +126,12 @@
 3. 如果修改脚本，使用 Node.js 执行基础语法检查：
 
    ```shell
+   node scripts/build.mjs
    node --check github-chinese-readme-override.user.js
+   node --test tests/integration.test.mjs
    ```
+
+   README 功能源码位于 `src/readme-override.js`；汉化上游原文件位于 `vendor/github-zh-i18n.user.js`，集成调整由 `scripts/build.mjs` 生成。请修改对应源码并重新构建，避免直接修改生成的安装文件。可运行 `node scripts/build.mjs --check` 检查构建产物是否同步。
 
 4. 在油猴中安装修改后的脚本，按改动范围验证：中文与原文切换、无中文文件、分支和子目录、相对链接及站内导航。
 5. 提交 Pull Request，说明修改目的、验证过的平台与页面、实际结果和未验证的场景。
