@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Chinese README Override
-// @name:zh-CN   GitHub 中文 README 覆盖与界面汉化
+// @name:zh-CN   GitHub 中文 README 覆盖器
 // @namespace    https://github.com/local-tools/chinese-readme-override
-// @version      1.3.1
-// @description  Show existing Chinese READMEs and localize the GitHub interface with a bundled dictionary.
-// @description:zh-CN 在支持的 Git 仓库页面显示已有中文 README，并使用本地词库汉化 GitHub 界面；两个功能可独立开关。
+// @version      1.3.2
+// @description  Show an existing Chinese README on supported Git repository pages, with a switch back to the original.
+// @description:zh-CN 在支持的 Git 仓库页面显示已有的中文 README，支持切换回原文。
 // @author       shenbourne
 // @license      MIT
 // @match        https://github.com/*
