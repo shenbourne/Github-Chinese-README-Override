@@ -2,7 +2,7 @@
 // @name         Chinese README Override
 // @name:zh-CN   GitHub 中文 README 覆盖器
 // @namespace    https://github.com/local-tools/chinese-readme-override
-// @version      1.3.3
+// @version      1.3.4
 // @description  Show an existing Chinese README on supported Git repository pages, with a switch back to the original.
 // @description:zh-CN 在支持的 Git 仓库页面显示已有的中文 README，支持切换回原文。
 // @author       shenbourne
@@ -437,6 +437,41 @@ el.removeAttribute('data-cro-state');
 document.querySelectorAll('.cro-bar').forEach((el) => el.remove());
 }
 
+/* ---------------- GitHub 汉化兼容 ---------------- */
+
+function repairTranslatedNavigation(root = document) {
+const selector = 'nav [data-content], [role="tablist"] [data-content], .UnderlineNav [data-content], [data-component="text"][data-content]';
+for (const label of root.querySelectorAll(selector)) {
+if (label.closest('.markdown-body, .comment-body, [contenteditable="true"]')) continue;
+if (!label.closest('a, button, [role="tab"]')) continue;
+// Primer uses data-content for an invisible bold label that reserves tab width.
+const text = label.textContent.trim();
+if (!/[\u3400-\u9fff]/.test(text)) continue;
+if (label.getAttribute('data-content') !== text) label.setAttribute('data-content', text);
+}
+}
+
+function observeTranslatedNavigation() {
+if (!enabled || location.hostname !== 'github.com') return;
+let scheduled = false;
+const schedule = () => {
+if (scheduled) return;
+scheduled = true;
+requestAnimationFrame(() => {
+scheduled = false;
+repairTranslatedNavigation();
+});
+};
+new MutationObserver(schedule).observe(document.body, {
+subtree: true,
+childList: true,
+characterData: true,
+attributes: true,
+attributeFilter: ['data-content'],
+});
+repairTranslatedNavigation();
+}
+
 /* ---------------- 主流程 ---------------- */
 
 let running = false;
@@ -485,6 +520,7 @@ resolve(v || null);
 // SPA（GitHub turbo / Gitea htmx）导航检测：URL 变化即重新处理
 function onUrlChange() {
 if (location.href === lastUrl) return;
+observeTranslatedNavigation();
 lastUrl = location.href;
 setTimeout(process, DETECT_DELAY);
 }
