@@ -2,7 +2,7 @@
 // @name         Chinese README Override
 // @name:zh-CN   GitHub 中文 README 覆盖器
 // @namespace    https://github.com/local-tools/chinese-readme-override
-// @version      1.3.2
+// @version      1.3.3
 // @description  Show an existing Chinese README on supported Git repository pages, with a switch back to the original.
 // @description:zh-CN 在支持的 Git 仓库页面显示已有的中文 README，支持切换回原文。
 // @author       shenbourne
@@ -361,9 +361,31 @@ readmeTab.dataset.croCreated = 'true';
 const tab = document.createElement('button');
 tab.type = 'button';
 tab.className = readmeTab.className + ' cro-translation-tab';
-tab.textContent = '译文';
 tab.title = found.name;
 tab.setAttribute('role', 'tab');
+const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+icon.setAttribute('data-component', 'Octicon');
+icon.setAttribute('aria-hidden', 'true');
+icon.setAttribute('focusable', 'false');
+icon.setAttribute('class', 'octicon octicon-globe');
+icon.setAttribute('viewBox', '0 0 16 16');
+icon.setAttribute('width', '16');
+icon.setAttribute('height', '16');
+icon.setAttribute('fill', 'currentColor');
+icon.setAttribute('display', 'inline-block');
+icon.setAttribute('overflow', 'visible');
+icon.style.verticalAlign = 'text-bottom';
+const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+path.setAttribute('d', 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM5.78 8.75a9.64 9.64 0 0 0 1.363 4.177c.255.426.542.832.857 1.215.245-.296.551-.705.857-1.215A9.64 9.64 0 0 0 10.22 8.75Zm4.44-1.5a9.64 9.64 0 0 0-1.363-4.177c-.307-.51-.612-.919-.857-1.215a9.927 9.927 0 0 0-.857 1.215A9.64 9.64 0 0 0 5.78 7.25Zm-5.944 1.5H1.543a6.507 6.507 0 0 0 4.666 5.5c-.123-.181-.24-.365-.352-.552-.715-1.192-1.437-2.874-1.581-4.948Zm-2.733-1.5h2.733c.144-2.074.866-3.756 1.58-4.948.12-.197.237-.381.353-.552a6.507 6.507 0 0 0-4.666 5.5Zm10.181 1.5c-.144 2.074-.866 3.756-1.58 4.948-.12.197-.237.381-.353.552a6.507 6.507 0 0 0 4.666-5.5Zm2.733-1.5a6.507 6.507 0 0 0-4.666-5.5c.123.181.24.365.353.552.714 1.192 1.436 2.874 1.58 4.948Z');
+icon.appendChild(path);
+const iconWrapper = document.createElement('span');
+iconWrapper.dataset.component = 'icon';
+iconWrapper.appendChild(icon);
+const label = document.createElement('span');
+label.dataset.component = 'text';
+label.dataset.content = '译文';
+label.textContent = '译文';
+tab.append(iconWrapper, label);
 const panel = readmeTab.getAttribute('aria-controls');
 if (panel) tab.setAttribute('aria-controls', panel);
 const originalSelected = readmeTab.getAttribute('aria-selected');
