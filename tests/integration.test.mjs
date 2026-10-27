@@ -67,7 +67,7 @@ test('dictionary translates UI and leaves protected content attributes unchanged
 });
 
 test('script header exposes both features', () => {
-  assert.match(header, /@version\s+1\.3\.0/);
+  assert.match(header, /@version\s+1\.3\.1/);
   assert.match(header, /@name:zh-CN\s+GitHub 中文 README 覆盖与界面汉化/);
 });
 

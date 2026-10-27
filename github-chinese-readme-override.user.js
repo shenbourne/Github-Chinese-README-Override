@@ -2,7 +2,7 @@
 // @name         Chinese README Override
 // @name:zh-CN   GitHub 中文 README 覆盖与界面汉化
 // @namespace    https://github.com/local-tools/chinese-readme-override
-// @version      1.3.0
+// @version      1.3.1
 // @description  Show existing Chinese READMEs and localize the GitHub interface with a bundled dictionary.
 // @description:zh-CN 在支持的 Git 仓库页面显示已有中文 README，并使用本地词库汉化 GitHub 界面；两个功能可独立开关。
 // @author       shenbourne
@@ -265,14 +265,27 @@ const {raw: rawRoot, blob: blobRoot} = platformRoots(repo, found);
 const directory = found.directory ? encPath(found.directory) + '/' : '';
 const rawDirectory = new URL(directory, rawRoot).href;
 const blobDirectory = new URL(directory, blobRoot).href;
+const imageProxies = new Map();
+if (repo.kind === 'github') {
+// GitHub blocks direct external images; reuse proxies already in its rendered README.
+findReadmeArticle()?.querySelectorAll('img[data-canonical-src]').forEach((image) => {
+const source = image.getAttribute('data-canonical-src');
+const proxy = image.getAttribute('src');
+if (source && proxy && new URL(proxy, location.origin).hostname === 'camo.githubusercontent.com') {
+imageProxies.set(source, proxy);
+}
+});
+}
 for (const [selector, attribute, root, base] of [
 ['img[src]', 'src', rawRoot, rawDirectory],
 ['a[href]', 'href', blobRoot, blobDirectory],
 ]) {
 template.content.querySelectorAll(selector).forEach((element) => {
 const value = element.getAttribute(attribute).trim();
-if (!value || value.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('//')) return;
-element.setAttribute(attribute, value.startsWith('/') ? new URL(value.slice(1), root).href : new URL(value, base).href);
+if (!value || value.startsWith('#')) return;
+const absolute = /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('//');
+const resolved = absolute ? value : value.startsWith('/') ? new URL(value.slice(1), root).href : new URL(value, base).href;
+element.setAttribute(attribute, attribute === 'src' ? imageProxies.get(resolved) || resolved : resolved);
 });
 }
 return template.innerHTML;
