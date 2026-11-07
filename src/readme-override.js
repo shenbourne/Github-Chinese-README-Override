@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         Chinese README Override
-// @name:zh-CN   GitHub 中文 README 覆盖器
+// @name:zh-CN   中文 README 优先显示
 // @namespace    https://github.com/local-tools/chinese-readme-override
-// @version      1.3.4
+// @version      1.0.0
 // @description  Show an existing Chinese README on supported Git repository pages, with a switch back to the original.
 // @description:zh-CN 在支持的 Git 仓库页面显示已有的中文 README，支持切换回原文。
 // @author       shenbourne
 // @license      MIT
+// @homepageURL  https://github.com/shenbourne/Github-Chinese-README-Override
+// @supportURL   https://github.com/shenbourne/Github-Chinese-README-Override/issues
 // @match        https://github.com/*
 // @match        https://gitee.com/*
 // @match        https://gitlab.com/*
@@ -25,19 +27,6 @@
 
 (function () {
 'use strict';
-
-/*
-
-从当前仓库的 API 读取目录和已有中文 README，使用 marked 和 DOMPurify
-
-在本地渲染，不使用机器翻译，不向第三方渲染服务发送 README 内容。
-
-自建 GitLab / Gitea：在用户脚本管理器的用户匹配规则中添加站点地址。
-
-访问公开及私有仓库是否成功，取决于该站点的 API 和当前会话权限。
-
-README 中的外部图片在浏览器加载时可能向对应图片服务器发送请求。
-*/
 
 /* ---------------- 可配置项 ---------------- */
 
@@ -73,14 +62,13 @@ location.reload();
 
 /* ---------------- 工具 ---------------- */
 
-function gmRequest(opts) {
+function requestReadmeData({ url, headers = {}, timeout = 10000 }) {
 return new Promise((resolve, reject) => {
 GM.xmlHttpRequest({
-method: opts.method || 'GET',
-url: opts.url,
-data: opts.data,
-headers: opts.headers || {},
-timeout: opts.timeout || 10000,
+method: 'GET',
+url,
+headers,
+timeout,
 onload: (res) => resolve(res),
 onerror: (err) => reject(err),
 ontimeout: () => reject(new Error('timeout')),
@@ -101,7 +89,7 @@ const generator = document.querySelector('meta[name="generator"]')?.content || '
 if (/gitlab/i.test(generator) || document.querySelector('meta[content="GitLab"]')) return 'gitlab';
 if (/gitea|forgejo/i.test(generator)) return 'gitea';
 try {
-const res = await gmRequest({url: `${location.origin}/api/v1/version`, headers: {Accept: 'application/json'}, timeout: 3000});
+const res = await requestReadmeData({url: `${location.origin}/api/v1/version`, headers: {Accept: 'application/json'}, timeout: 3000});
 if (res.status >= 200 && res.status < 300) {
 const data = JSON.parse(res.responseText);
 if (typeof data.version === 'string' && /^v?\d+.\d+/.test(data.version)) return 'gitea';
@@ -152,7 +140,7 @@ return `${location.origin}/api/${repo.kind === 'gitea' ? 'v1' : 'v5'}/repos/${pr
 }
 
 async function getJson(url) {
-const res = await gmRequest({url, headers: {Accept: 'application/json'}});
+const res = await requestReadmeData({url, headers: {Accept: 'application/json'}});
 if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}: ${url}`);
 return JSON.parse(res.responseText);
 }
@@ -205,7 +193,7 @@ return null;
 async function fetchReadme(repo, found) {
 const base = apiBase(repo), ref = encodeURIComponent(found.branch);
 if (repo.kind === 'gitlab') {
-const res = await gmRequest({url: `${base}/repository/files/${encodeURIComponent(found.name)}/raw?ref=${ref}`});
+const res = await requestReadmeData({url: `${base}/repository/files/${encodeURIComponent(found.name)}/raw?ref=${ref}`});
 if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
 return res.responseText;
 }
@@ -291,8 +279,7 @@ element.setAttribute(attribute, attribute === 'src' ? imageProxies.get(resolved)
 return template.innerHTML;
 }
 
-async function renderReadme(md, found, repo) {
-// 所有仓库均本地渲染，避免把私有 README 发到第三方接口。
+function renderReadme(md, found, repo) {
 return normalizeReadmeHtml(marked.parse(md, { gfm: true, breaks: false }), found, repo);
 }
 function injectStyles() {
@@ -488,7 +475,7 @@ if (!repo) return;
 const found = await findChineseReadme(repo);
 if (!found) return; // 没有中文 README，什么都不做
 const md = await fetchReadme(repo, found);
-const html = await renderReadme(md, found, repo);
+const html = renderReadme(md, found, repo);
 // 等页面 README 渲染出来
 const article = await waitFor(() => findReadmeArticle(), 8000);
 if (!article || location.href !== processUrl) return;
