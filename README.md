@@ -29,7 +29,7 @@
 - 点击原有 README 标签可切回原文，点击「译文」可重新显示中文。
 - 在没有合适标签栏的页面，脚本会尝试在 README 标题附近添加切换入口。
 - 点击油猴菜单中的「中文 README 覆盖：已启用／已停用」可切换脚本状态；页面会随之刷新。
-- 默认分支首页会依次查找根目录和 `docs` 目录；分支、标签或子目录页面会在识别到的当前目录内查找。
+- GitHub 仓库首页支持查找深层目录中的中文 README，例如 `docs/readme/README_zh_CN.md`。
 
 ## 支持的网站
 
@@ -67,17 +67,21 @@
 
 ### 中文文件识别
 
+在 GitHub 仓库首页，脚本优先从页面的文件列表识别根目录下的中文 README。列表中没有匹配项时，再通过默认分支的文件索引查找，依次优先匹配根目录、`docs`、`docs` 的子目录和其他目录。同一组内优先选路径较浅的文件。索引不可用或被截断时，改为直接查找根目录和 `docs`。
+
+其他平台的仓库首页查找根目录和 `docs`。浏览分支、标签或子目录时，脚本在当前目录查找；如果当前目录是仓库根目录，也会查找 `docs`。
+
 脚本按 `CANDIDATE_NAMES` 中的顺序精确匹配文件名，同时尝试以小写 `readme` 开头的对应名称。常见候选包括：
 
 - `README.zh-CN.md`、`README.zh_CN.md`、`README.zh-cn.md`、`README.zh.md`
 - `README_zh.md`、`README_zh_CN.md`、`README-cn.md`、`README_CN.md`
 - `README.zh-hans.md`、`README中文.md`、`README.中文.md`、`中文README.md`
 
-完整列表以脚本为准。需要其他命名时，可以编辑 `CANDIDATE_NAMES`；这不是任意大小写匹配，也不会递归遍历整个仓库。
+需要添加其他命名时，可以编辑 `CANDIDATE_NAMES`。
 
 ### 数据与隐私
 
-- README 正文通过对应平台 API 获取，使用 marked 和 DOMPurify 在浏览器内渲染与清理。
+- README 正文通过对应平台的文件 API 获取；GitHub 页面文件列表命中时优先读取 GitHub 提供的原始文件。正文在浏览器中渲染。
 - 不调用机器翻译服务，也不把 README 正文提交给第三方渲染服务。
 - 依赖库通过脚本头部的 `@require` 从 jsDelivr 加载。
 - README 中的外部图片仍可能向图片服务器发送请求；相对图片和链接会尝试转换为当前仓库对应地址。

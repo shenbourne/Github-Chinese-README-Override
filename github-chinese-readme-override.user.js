@@ -2,7 +2,7 @@
 // @name         Chinese README Override
 // @name:zh-CN   中文 README 优先显示
 // @namespace    https://github.com/local-tools/chinese-readme-override
-// @version      1.0.0
+// @version      1.1.0
 // @description  Show an existing Chinese README on supported Git repository pages, with a switch back to the original.
 // @description:zh-CN 在支持的 Git 仓库页面显示已有的中文 README，支持切换回原文。
 // @author       shenbourne
@@ -15,6 +15,7 @@
 // @match        https://gitcode.com/*
 // @connect      self
 // @connect      api.github.com
+// @connect      raw.githubusercontent.com
 // @connect      api.gitcode.com
 // @require      https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js
 // @require      https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js
@@ -49,6 +50,7 @@ const DETECT_DELAY = 600;
 const ENABLED_KEY = 'cro_enabled';
 let enabled = GM_getValue(ENABLED_KEY, true);
 let lastUrl = null;
+let translationIconCount = 0;
 
 GM_registerMenuCommand(
 (enabled ? '中文 README 覆盖：已启用（点击停用）' : '中文 README 覆盖：已停用（点击启用）'),
@@ -173,15 +175,73 @@ return {ref, directory, entries};
 throw new Error('无法识别当前分支/标签和目录，或无读取权限');
 }
 
+const readmeNamePriority = new Map(
+  [...new Set([...CANDIDATE_NAMES, ...CANDIDATE_NAMES.map((name) => 'readme' + name.slice(6))])]
+    .map((name, index) => [name, index]),
+);
+
+function findGitHubReadmeInFileList(repo) {
+  const prefix = `/${encPath(repo.project)}/blob/`;
+  let best = null;
+  for (const link of document.querySelectorAll('tr a[href], [role="row"] a[href]')) {
+    if (link.closest('.markdown-body')) continue;
+    const name = link.textContent.trim();
+    const priority = readmeNamePriority.get(name);
+    if (priority === undefined || (best && priority >= best.priority)) continue;
+    const url = new URL(link.href, location.origin);
+    const suffix = `/${encodeURIComponent(name)}`;
+    if (url.origin !== location.origin || !url.pathname.startsWith(prefix) ||
+        !url.pathname.endsWith(suffix)) continue;
+    try {
+      const branch = decodeURIComponent(url.pathname.slice(prefix.length, -suffix.length));
+      if (branch) best = { branch, name, directory: '', priority, fromFileList: true };
+    } catch (_) { /* 忽略无法解码的链接 */ }
+  }
+  return best;
+}
+
+async function findGitHubReadmeInTree(repo, ref) {
+  const index = await getJson(`${apiBase(repo)}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+  if (index.truncated || !Array.isArray(index.tree)) return undefined;
+
+  let best;
+  for (const entry of index.tree) {
+    if (entry.type !== 'blob' || entry.mode === '120000' || typeof entry.path !== 'string') continue;
+    const parts = entry.path.split('/');
+    const priority = readmeNamePriority.get(parts.pop());
+    if (priority === undefined) continue;
+    const directory = parts.join('/');
+    const group = directory === '' ? 0 : directory === 'docs' ? 1 : directory.startsWith('docs/') ? 2 : 3;
+    const depth = parts.length;
+    if (!best || group < best.group ||
+        (group === best.group && (depth < best.depth ||
+          (depth === best.depth && (priority < best.priority ||
+            (priority === best.priority && entry.path < best.name)))))) {
+      best = { branch: ref, name: entry.path, directory, group, depth, priority };
+    }
+  }
+  return best ? { branch: best.branch, name: best.name, directory: best.directory } : null;
+}
+
 async function findChineseReadme(repo) {
+if (repo.kind === 'github' && !repo.rest.length) {
+const visibleReadme = findGitHubReadmeInFileList(repo);
+if (visibleReadme) return visibleReadme;
+}
 const page = await locatePage(repo);
+if (repo.kind === 'github' && !repo.rest.length) {
+  try {
+    const indexed = await findGitHubReadmeInTree(repo, page.ref);
+    if (indexed !== undefined) return indexed;
+  } catch (_) { /* 文件索引不可用时直接查目录 */ }
+}
 const directories = page.directory ? [page.directory] : ['', 'docs'];
-const names = [...new Set([...CANDIDATE_NAMES, ...CANDIDATE_NAMES.map((n) => 'readme' + n.slice(6))])];
 for (const directory of directories) {
 let entries;
 try { entries = directory === page.directory && page.entries ? page.entries : await listDirectory(repo, page.ref, directory); }
 catch (_) { continue; }
-const filename = names.find((n) => entries.some((e) => (e.type === 'file' || e.type === 'blob') && e.name === n));
+const filenames = new Set(entries.filter((entry) => entry.type === 'file' || entry.type === 'blob').map((entry) => entry.name));
+const filename = [...readmeNamePriority.keys()].find((name) => filenames.has(name));
 if (filename) {
 const path = [directory, filename].filter(Boolean).join('/');
 return {branch: page.ref, name: path, directory};
@@ -192,6 +252,13 @@ return null;
 
 async function fetchReadme(repo, found) {
 const base = apiBase(repo), ref = encodeURIComponent(found.branch);
+if (repo.kind === 'github' && found.fromFileList) {
+try {
+const url = `https://raw.githubusercontent.com/${encPath(repo.project)}/${encPath(found.branch)}/${encPath(found.name)}`;
+const res = await requestReadmeData({ url });
+if (res.status === 200 && typeof res.responseText === 'string') return res.responseText;
+} catch (_) { /* 改用 GitHub 文件 API */ }
+}
 if (repo.kind === 'gitlab') {
 const res = await requestReadmeData({url: `${base}/repository/files/${encodeURIComponent(found.name)}/raw?ref=${ref}`});
 if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
@@ -215,7 +282,7 @@ return {raw: `${root}/raw/${ref}/`, blob: `${root}/blob/${ref}/`};
 }
 /* ---------------- DOM 定位 ---------------- */
 
-function findReadmeArticle() {
+function findReadmeArticle(root = document) {
 const selectors = [
 '[data-testid="readme"] article.markdown-body',
 '.readme-holder .md',
@@ -230,11 +297,11 @@ const selectors = [
 '#readme .markdown-body',                       // Gitee 旧版
 ];
 for (const sel of selectors) {
-const el = document.querySelector(sel);
+const el = root.matches?.(sel) ? root : root.querySelector(sel);
 if (el && el.offsetParent !== null) return el;
 }
 // 最后兜底：取页面上最大的、位于 readme 容器内的 .markdown-body
-const bodies = [...document.querySelectorAll('.markdown-body')];
+const bodies = [...root.querySelectorAll('.markdown-body')];
 const inReadme = bodies.filter((el) => {
 const box = el.closest('[id*="readme" i], [class*="readme" i]');
 return box && el.offsetParent !== null;
@@ -318,19 +385,27 @@ article.dataset.croState = 'orig';
 }
 
 const tabStore = new WeakMap();
+const tabsByHost = new WeakMap();
 
 function addBar(article, found, repo) {
 injectStyles();
 const existing = tabStore.get(article);
-if (existing && existing.tab.isConnected) {
+if (existing?.tab.isConnected && existing.readmeTab.isConnected) {
 existing.select(true);
 return;
 }
 let container = article.parentElement;
 let readmeTab = null;
 for (let depth = 0; container && depth < 8; depth++, container = container.parentElement) {
-readmeTab = [...container.querySelectorAll('[role="tab"], .UnderlineNav-item, nav a, nav button')]
-.find((element) => !article.contains(element) && /^README(?:.md)?$/i.test(element.textContent.trim()));
+readmeTab = [...container.querySelectorAll('[role="tab"], .UnderlineNav-item, a[class*="UnderlineItem"], nav a, nav button, [data-cro-created]')]
+.find((element) => !article.contains(element) &&
+!element.classList.contains('cro-translation-tab') &&
+(element.dataset.croCreated ||
+  /^(?:README(?:\.md)?|自述文件|讀我檔案|讀我文件)$/i.test(element.textContent.trim()) ||
+  (repo.kind === 'github' && (
+    /(?:^|[-_])readme(?:$|[-_])/i.test(element.getAttribute('aria-controls') || '') ||
+    element.querySelector('.octicon-book')
+  ))));
 if (readmeTab) break;
 }
 if (!readmeTab) {
@@ -345,6 +420,15 @@ readmeTab.textContent = 'README 原文';
 article.before(readmeTab);
 readmeTab.dataset.croCreated = 'true';
 }
+const insertionPoint = readmeTab.parentElement.tagName === 'LI' ? readmeTab.parentElement : readmeTab;
+const host = insertionPoint.parentElement;
+const previous = tabsByHost.get(host);
+if (previous?.tab.isConnected && previous.readmeTab === readmeTab) {
+previous.bind(article);
+previous.select(true);
+return;
+}
+previous?.cleanup();
 const tab = document.createElement('button');
 tab.type = 'button';
 tab.className = readmeTab.className + ' cro-translation-tab';
@@ -354,17 +438,41 @@ const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
 icon.setAttribute('data-component', 'Octicon');
 icon.setAttribute('aria-hidden', 'true');
 icon.setAttribute('focusable', 'false');
-icon.setAttribute('class', 'octicon octicon-globe');
+icon.setAttribute('class', 'octicon cro-translation-icon');
 icon.setAttribute('viewBox', '0 0 16 16');
 icon.setAttribute('width', '16');
 icon.setAttribute('height', '16');
-icon.setAttribute('fill', 'currentColor');
+icon.setAttribute('fill', 'none');
 icon.setAttribute('display', 'inline-block');
 icon.setAttribute('overflow', 'visible');
 icon.style.verticalAlign = 'text-bottom';
-const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-path.setAttribute('d', 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM5.78 8.75a9.64 9.64 0 0 0 1.363 4.177c.255.426.542.832.857 1.215.245-.296.551-.705.857-1.215A9.64 9.64 0 0 0 10.22 8.75Zm4.44-1.5a9.64 9.64 0 0 0-1.363-4.177c-.307-.51-.612-.919-.857-1.215a9.927 9.927 0 0 0-.857 1.215A9.64 9.64 0 0 0 5.78 7.25Zm-5.944 1.5H1.543a6.507 6.507 0 0 0 4.666 5.5c-.123-.181-.24-.365-.352-.552-.715-1.192-1.437-2.874-1.581-4.948Zm-2.733-1.5h2.733c.144-2.074.866-3.756 1.58-4.948.12-.197.237-.381.353-.552a6.507 6.507 0 0 0-4.666 5.5Zm10.181 1.5c-.144 2.074-.866 3.756-1.58 4.948-.12.197-.237.381-.353.552a6.507 6.507 0 0 0 4.666-5.5Zm2.733-1.5a6.507 6.507 0 0 0-4.666-5.5c.123.181.24.365.353.552.714 1.192 1.436 2.874 1.58 4.948Z');
-icon.appendChild(path);
+const svgNS = icon.namespaceURI;
+const englishShape = 'M1.9 3.15c.45-.7 1.2-1.05 2.15-1.05 1.4 0 2.25.78 2.25 2.04v4.15m0-3.66H4.08c-1.35 0-2.33.62-2.33 1.78 0 .99.75 1.64 1.8 1.64 1.18 0 2.17-.69 2.75-1.73';
+const chineseShape = 'M9.1 5.65l.8 1.1 M5.65 7.65h8.55m-1.6 0c-.8 2.95-3.1 5.13-6.6 6.33m1.55-6.33c1.02 2.95 3.4 5.13 6.75 6.33';
+const makeStroke = (d, color, width) => {
+  const stroke = document.createElementNS(svgNS, 'path');
+  stroke.setAttribute('d', d);
+  stroke.setAttribute('fill', 'none');
+  stroke.setAttribute('stroke', color);
+  stroke.setAttribute('stroke-width', width);
+  stroke.setAttribute('stroke-linecap', 'round');
+  stroke.setAttribute('stroke-linejoin', 'round');
+  return stroke;
+};
+const maskId = 'cro-translation-icon-mask-' + (++translationIconCount);
+const mask = document.createElementNS(svgNS, 'mask');
+mask.id = maskId;
+mask.setAttribute('maskUnits', 'userSpaceOnUse');
+mask.setAttribute('width', '16');
+mask.setAttribute('height', '16');
+const maskBackground = document.createElementNS(svgNS, 'rect');
+maskBackground.setAttribute('width', '16');
+maskBackground.setAttribute('height', '16');
+maskBackground.setAttribute('fill', 'white');
+mask.append(maskBackground, makeStroke(chineseShape, 'black', '2.6'));
+const english = makeStroke(englishShape, 'currentColor', '1.25');
+english.setAttribute('mask', 'url(#' + maskId + ')');
+icon.append(mask, english, makeStroke(chineseShape, 'currentColor', '1.25'));
 const iconWrapper = document.createElement('span');
 iconWrapper.dataset.component = 'icon';
 iconWrapper.appendChild(icon);
@@ -382,36 +490,89 @@ tab.dataset.croActive = String(translated);
 readmeTab.setAttribute('aria-selected', String(!translated));
 tab.setAttribute('aria-selected', String(translated));
 };
+let currentArticle = article;
+let clickSequence = 0;
 const onOriginal = () => {
-restoreOriginal(article);
+clickSequence++;
+restoreOriginal(currentArticle);
 select(false);
 };
+const clearTranslationSelection = () => {
+clickSequence++;
+delete readmeTab.dataset.croActive;
+tab.dataset.croActive = 'false';
+tab.setAttribute('aria-selected', 'false');
+};
+const tabSelector = '[role="tab"], .UnderlineNav-item, [aria-controls], [aria-current], a, button';
+const isOtherNativeTab = (target) => {
+if (!target || !host.contains(target) || target === readmeTab || target === tab) return false;
+if (target.closest('.cro-translation-tab')) return false;
+// 仅处理同一排的标签，包括包在 li 中的链接和按钮。
+const item = target.parentElement?.tagName === 'LI' ? target.parentElement : target;
+return item.parentElement === host && item !== insertionPoint;
+};
+const onOtherTabClick = (event) => {
+const target = event.target.closest?.(tabSelector);
+if (isOtherNativeTab(target)) clearTranslationSelection();
+};
+host.addEventListener('click', onOtherTabClick, true);
+const tabSelectionObserver = new MutationObserver((changes) => {
+if (changes.some(({ target }) => {
+if (!target.matches(tabSelector) || !isOtherNativeTab(target)) return false;
+const current = target.getAttribute('aria-current');
+return target.getAttribute('aria-selected') === 'true' || Boolean(current && current !== 'false');
+})) {
+clearTranslationSelection();
+}
+});
+tabSelectionObserver.observe(host, { subtree: true, attributes: true, attributeFilter: ['aria-selected', 'aria-current'] });
 readmeTab.addEventListener('click', onOriginal, true);
-tab.addEventListener('click', (event) => {
+tab.addEventListener('click', async (event) => {
 event.preventDefault();
 event.stopPropagation();
+const html = currentArticle.dataset.croHtml;
+const url = repositoryPageKey();
 // 激活网站原有 README 面板，以便从 License 标签切回。
 readmeTab.click();
-applyChineseReadme(article, found, repo);
-select(true);
+const sequence = clickSequence;
+await new Promise((resolve) => requestAnimationFrame(resolve));
+const activeArticle = await waitFor(() => {
+if (!tab.isConnected || repositoryPageKey() !== url || sequence !== clickSequence) return true;
+const readmePanel = panel && document.getElementById(panel);
+if (readmePanel) return findReadmeArticle(readmePanel);
+if (panel) return null;
+return currentArticle.isConnected && currentArticle.offsetParent !== null ? currentArticle : findReadmeArticle();
+}, 2000);
+if (!activeArticle || activeArticle === true || sequence !== clickSequence || !tab.isConnected || repositoryPageKey() !== url) return;
+activeArticle.dataset.croHtml = html;
+applyChineseReadme(activeArticle, found, repo);
 });
-let insertionPoint = readmeTab;
 let wrapper = null;
-if (readmeTab.parentElement.tagName === 'LI') {
-insertionPoint = readmeTab.parentElement;
+if (insertionPoint !== readmeTab) {
 wrapper = document.createElement('li');
 wrapper.className = insertionPoint.className;
 wrapper.appendChild(tab);
 }
 insertionPoint.after(wrapper || tab);
-tabStore.set(article, { tab, select, cleanup: () => {
+const state = { tab, readmeTab, select, bind(nextArticle) {
+tabStore.delete(currentArticle);
+currentArticle = nextArticle;
+tabStore.set(currentArticle, state);
+}, cleanup: () => {
+clickSequence++;
+tabStore.delete(currentArticle);
+tabsByHost.delete(host);
+host.removeEventListener('click', onOtherTabClick, true);
+tabSelectionObserver.disconnect();
 readmeTab.removeEventListener('click', onOriginal, true);
 if (readmeTab.dataset.croCreated) readmeTab.remove();
 delete readmeTab.dataset.croActive;
 if (originalSelected == null) readmeTab.removeAttribute('aria-selected');
 else readmeTab.setAttribute('aria-selected', originalSelected);
 (wrapper || tab).remove();
-} });
+} };
+state.bind(article);
+tabsByHost.set(host, state);
 select(true);
 }
 function restoreAll() {
@@ -463,13 +624,20 @@ repairTranslatedNavigation();
 
 let running = false;
 
+function repositoryPageKey() {
+const url = new URL(location.href);
+url.hash = '';
+if (url.hostname === 'github.com') url.searchParams.delete('tab');
+return url.href;
+}
+
 async function process() {
 if (!enabled || running) return;
 running = true;
-const processUrl = location.href;
+const processUrl = repositoryPageKey();
 try {
 const kind = await detectPlatform();
-if (location.href !== processUrl) return;
+if (repositoryPageKey() !== processUrl) return;
 const repo = parseRepoHome(kind);
 if (!repo) return;
 const found = await findChineseReadme(repo);
@@ -478,7 +646,7 @@ const md = await fetchReadme(repo, found);
 const html = renderReadme(md, found, repo);
 // 等页面 README 渲染出来
 const article = await waitFor(() => findReadmeArticle(), 8000);
-if (!article || location.href !== processUrl) return;
+if (!article || repositoryPageKey() !== processUrl) return;
 article.dataset.croHtml = html;
 applyChineseReadme(article, found, repo);
 
@@ -486,7 +654,7 @@ applyChineseReadme(article, found, repo);
   console.warn('[Chinese README Override]', e);
 } finally {
   running = false;
-  if (location.href !== processUrl) setTimeout(process, DETECT_DELAY);
+  if (repositoryPageKey() !== processUrl) setTimeout(process, DETECT_DELAY);
 }
 
 }
@@ -506,9 +674,10 @@ resolve(v || null);
 
 // SPA（GitHub turbo / Gitea htmx）导航检测：URL 变化即重新处理
 function onUrlChange() {
-if (location.href === lastUrl) return;
+const url = repositoryPageKey();
+if (url === lastUrl) return;
 observeTranslatedNavigation();
-lastUrl = location.href;
+lastUrl = url;
 setTimeout(process, DETECT_DELAY);
 }
 
@@ -518,6 +687,6 @@ document.addEventListener('pjax', onUrlChange);
 new MutationObserver(() => onUrlChange()).observe(document.body, { childList: true, subtree: false });
 setInterval(onUrlChange, 1000);
 
-lastUrl = location.href;
+lastUrl = repositoryPageKey();
 setTimeout(process, DETECT_DELAY);
 })();
